@@ -1,0 +1,890 @@
+{
+  "name": "Lead intake and first reply",
+  "description": null,
+  "activeVersionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
+  "createdAt": "2026-08-29T15:20:43.337Z",
+  "updatedAt": "2026-08-31T01:10:25.122Z",
+  "isArchived": false,
+  "versionCounter": 8,
+  "sourceWorkflowId": null,
+  "triggerCount": 1,
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Lead arrives",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "ph-lead-intake",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Work out the source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Work out where this lead actually came from.\n// First match wins. Anything unmatched is marked Unknown, never guessed —\n// a wrong source is worse than an honest gap.\n\nconst b = $json.body ?? $json;\nconst q = b.query ?? {};\nconst get = (...keys) => {\n  for (const k of keys) {\n    const v = b[k] ?? q[k];\n    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n  }\n  return '';\n};\n\nconst gclid    = get('gclid');\nconst fbclid   = get('fbclid');\nconst utmSrc   = get('utm_source').toLowerCase();\nconst utmMed   = get('utm_medium').toLowerCase();\nconst referrer = get('referrer', 'document_referrer', 'http_referer');\nconst tracked  = get('tracked_number', 'called_number', 'to');\n\nlet source = 'Unknown';\nlet clickId = '';\n\nif (tracked) {\n  source = 'Phone';                                  // a tracked number identifies the source outright\n} else if (gclid)  { source = 'Google Ads';   clickId = gclid; }\nelse if (fbclid)   { source = 'Facebook Ads'; clickId = fbclid; }\nelse if (utmSrc) {\n  const key = utmSrc.replace(/[^a-z]/g, '');\n  const paid = utmMed.includes('cpc') || utmMed.includes('paid') || utmMed.includes('ppc');\n  const map = {\n    google: paid ? 'Google Ads' : 'Website form',\n    adwords: 'Google Ads', googleads: 'Google Ads',\n    facebook: 'Facebook Ads', fb: 'Facebook Ads', meta: 'Facebook Ads', instagram: 'Facebook Ads',\n    angi: 'Angi', angieslist: 'Angi', homeadvisor: 'Angi',\n    thumbtack: 'Thumbtack',\n    lsa: 'Google LSA', localservices: 'Google LSA',\n    referral: 'Referral',\n  };\n  source = map[key] || 'Unknown';\n} else if (referrer) {\n  const r = referrer.toLowerCase();\n  if (r.includes('angi') || r.includes('homeadvisor')) source = 'Angi';\n  else if (r.includes('thumbtack')) source = 'Thumbtack';\n  else if (r.includes('localservices') || r.includes('/lsa')) source = 'Google LSA';\n  else if (r.includes('facebook') || r.includes('instagram')) source = 'Facebook Ads';\n  else if (r.includes('yourdomain.com')) source = 'Website form';\n  else source = 'Referral';\n} else if (get('name', 'email', 'phone')) {\n  source = 'Website form';                           // landed direct, filled the form in\n}\n\nconst digits = (s) => s.replace(/[^\\d+]/g, '');\nconst service = get('service');\nconst known = ['Moving', 'Roofing', 'Plumbing', 'HVAC', 'Solar'];\nconst matchedService = known.find(s => s.toLowerCase() === service.toLowerCase());\n\n// Columns must sit at the top level for the Airtable step to map them.\nconst row = {\n  'Name':           get('name', 'full_name', 'first_name') || 'Unnamed lead',\n  'Received':       new Date().toISOString(),\n  'Phone':          digits(get('phone', 'phone_number', 'from')),\n  'Email':          get('email'),\n  'Service':        matchedService || (service ? 'Other' : ''),\n  'Source':         source,\n  'Campaign':       get('utm_campaign'),\n  'Landing page':   get('landing_page', 'page_url', 'url'),\n  'Tracked number': digits(tracked),\n  'Click ID':       clickId,\n  'Stage':          'New',\n  'Message':        get('message', 'notes', 'comments'),\n};\n\n// Drop empties rather than writing blanks into Airtable.\nfor (const k of Object.keys(row)) if (row[k] === '' || row[k] == null) delete row[k];\n\nreturn [{ json: row }];\n"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Save to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable — Pipeline House"
+        }
+      },
+      "parameters": {
+        "resource": "record",
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appXXXXXXXXXXXXXX",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblSOURCESXXXXXXX",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": []
+        },
+        "options": {
+          "typecast": true
+        }
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Look up what this source costs",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable — Pipeline House"
+        }
+      },
+      "parameters": {
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appXXXXXXXXXXXXXX",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLEADSXXXXXXXXX",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ \"{Source} = '\" + $json.Source + \"'\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Attach the cost",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// The lookup replaced our lead with the Sources row, so pull the lead back\n// and copy the rate across. Missing rate is fine — the field stays empty and\n// the summary will report how many leads it could not price.\n\nconst lead = { ...$('Work out the source').first().json };\nconst rate = $json['Cost per lead'] ?? $json.fields?.['Cost per lead'];\n\nif (rate !== undefined && rate !== null && rate !== '') {\n  lead['Lead cost'] = Number(rate);\n}\n\nreturn [{ json: lead }];\n"
+      }
+    },
+    {
+      "id": "a9",
+      "name": "Record the reply",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1780,
+        0
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable — Pipeline House"
+        }
+      },
+      "parameters": {
+        "resource": "record",
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appXXXXXXXXXXXXXX",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblSOURCESXXXXXXX",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": []
+        },
+        "options": {
+          "typecast": true
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "name": "Reply to the form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, id: $('Save to Airtable').first().json.id, source: $('Attach the cost').first().json.Source, replied: $('Tidy up').first().json['Reply channel'] }) }}"
+      }
+    },
+    {
+      "id": "d1",
+      "name": "Look for recent duplicates",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable — Pipeline House"
+        }
+      },
+      "parameters": {
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appXXXXXXXXXXXXXX",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblSOURCESXXXXXXX",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ (() => { const l = $('Attach the cost').first().json; const esc = s => String(s||'').replace(/'/g, ''); const e = esc(l.Email), p = esc(l.Phone); const parts = []; if (e) parts.push(\"{Email}='\" + e + \"'\"); if (p) parts.push(\"{Phone}='\" + p + \"'\"); return parts.length ? 'OR(' + parts.join(',') + ')' : 'FALSE()'; })() }}",
+        "limit": 5,
+        "options": {}
+      }
+    },
+    {
+      "id": "k1",
+      "name": "Check the lead is real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "i1",
+      "name": "Worth messaging?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json._send }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s1",
+      "name": "Send the email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        -110
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "Resend — Pipeline House"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <onboarding@resend.dev>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "z1",
+      "name": "Tidy up",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        110
+      ],
+      "parameters": {
+        "jsCode": "\n// Keys beginning with _ are working values, not Airtable columns. Auto-mapping\n// would try to write them as fields and the update would fail, so they are\n// stripped here rather than scattered through the flow.\n\nconst row = { ...$('Check the lead is real').first().json };\n\nlet emailed = false;\ntry { emailed = !!$('Send the email').first().json?.id; } catch (e) { emailed = false; }\nif (row._send && !emailed) row['Reply channel'] = 'Not sent — send failed';\n\nconsole.log(`replied in ${row._seconds}s` + (row._blocked ? ` | blocked: ${row._blocked}` : ''));\n\nfor (const k of Object.keys(row)) if (k.startsWith('_')) delete row[k];\nreturn [{ json: row }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Lead arrives": {
+      "main": [
+        [
+          {
+            "node": "Work out the source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Work out the source": {
+      "main": [
+        [
+          {
+            "node": "Look up what this source costs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up what this source costs": {
+      "main": [
+        [
+          {
+            "node": "Attach the cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach the cost": {
+      "main": [
+        [
+          {
+            "node": "Save to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Look for recent duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look for recent duplicates": {
+      "main": [
+        [
+          {
+            "node": "Check the lead is real",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the lead is real": {
+      "main": [
+        [
+          {
+            "node": "Worth messaging?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worth messaging?": {
+      "main": [
+        [
+          {
+            "node": "Send the email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tidy up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send the email": {
+      "main": [
+        [
+          {
+            "node": "Tidy up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up": {
+      "main": [
+        [
+          {
+            "node": "Record the reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record the reply": {
+      "main": [
+        [
+          {
+            "node": "Reply to the form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "activeVersion": {
+    "versionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
+    "workflowId": "4pRHSWrUhS5IEjhG",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Lead arrives",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "ph-lead-intake",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "lead",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": false
+          }
+        }
+      },
+      {
+        "id": "n2",
+        "name": "Work out the source",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\n// Work out where this lead actually came from.\n// First match wins. Anything unmatched is marked Unknown, never guessed —\n// a wrong source is worse than an honest gap.\n\nconst b = $json.body ?? $json;\nconst q = b.query ?? {};\nconst get = (...keys) => {\n  for (const k of keys) {\n    const v = b[k] ?? q[k];\n    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n  }\n  return '';\n};\n\nconst gclid    = get('gclid');\nconst fbclid   = get('fbclid');\nconst utmSrc   = get('utm_source').toLowerCase();\nconst utmMed   = get('utm_medium').toLowerCase();\nconst referrer = get('referrer', 'document_referrer', 'http_referer');\nconst tracked  = get('tracked_number', 'called_number', 'to');\n\nlet source = 'Unknown';\nlet clickId = '';\n\nif (tracked) {\n  source = 'Phone';                                  // a tracked number identifies the source outright\n} else if (gclid)  { source = 'Google Ads';   clickId = gclid; }\nelse if (fbclid)   { source = 'Facebook Ads'; clickId = fbclid; }\nelse if (utmSrc) {\n  const key = utmSrc.replace(/[^a-z]/g, '');\n  const paid = utmMed.includes('cpc') || utmMed.includes('paid') || utmMed.includes('ppc');\n  const map = {\n    google: paid ? 'Google Ads' : 'Website form',\n    adwords: 'Google Ads', googleads: 'Google Ads',\n    facebook: 'Facebook Ads', fb: 'Facebook Ads', meta: 'Facebook Ads', instagram: 'Facebook Ads',\n    angi: 'Angi', angieslist: 'Angi', homeadvisor: 'Angi',\n    thumbtack: 'Thumbtack',\n    lsa: 'Google LSA', localservices: 'Google LSA',\n    referral: 'Referral',\n  };\n  source = map[key] || 'Unknown';\n} else if (referrer) {\n  const r = referrer.toLowerCase();\n  if (r.includes('angi') || r.includes('homeadvisor')) source = 'Angi';\n  else if (r.includes('thumbtack')) source = 'Thumbtack';\n  else if (r.includes('localservices') || r.includes('/lsa')) source = 'Google LSA';\n  else if (r.includes('facebook') || r.includes('instagram')) source = 'Facebook Ads';\n  else if (r.includes('yourdomain.com')) source = 'Website form';\n  else source = 'Referral';\n} else if (get('name', 'email', 'phone')) {\n  source = 'Website form';                           // landed direct, filled the form in\n}\n\nconst digits = (s) => s.replace(/[^\\d+]/g, '');\nconst service = get('service');\nconst known = ['Moving', 'Roofing', 'Plumbing', 'HVAC', 'Solar'];\nconst matchedService = known.find(s => s.toLowerCase() === service.toLowerCase());\n\n// Columns must sit at the top level for the Airtable step to map them.\nconst row = {\n  'Name':           get('name', 'full_name', 'first_name') || 'Unnamed lead',\n  'Received':       new Date().toISOString(),\n  'Phone':          digits(get('phone', 'phone_number', 'from')),\n  'Email':          get('email'),\n  'Service':        matchedService || (service ? 'Other' : ''),\n  'Source':         source,\n  'Campaign':       get('utm_campaign'),\n  'Landing page':   get('landing_page', 'page_url', 'url'),\n  'Tracked number': digits(tracked),\n  'Click ID':       clickId,\n  'Stage':          'New',\n  'Message':        get('message', 'notes', 'comments'),\n};\n\n// Drop empties rather than writing blanks into Airtable.\nfor (const k of Object.keys(row)) if (row[k] === '' || row[k] == null) delete row[k];\n\nreturn [{ json: row }];\n"
+        }
+      },
+      {
+        "id": "n3",
+        "name": "Save to Airtable",
+        "type": "n8n-nodes-base.airtable",
+        "typeVersion": 2.1,
+        "position": [
+          880,
+          0
+        ],
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "kfUPkHmUFozrqUdz",
+            "name": "Airtable — Pipeline House"
+          }
+        },
+        "parameters": {
+          "resource": "record",
+          "operation": "create",
+          "base": {
+            "__rl": true,
+            "value": "appXXXXXXXXXXXXXX",
+            "mode": "id"
+          },
+          "table": {
+            "__rl": true,
+            "value": "tblSOURCESXXXXXXX",
+            "mode": "id"
+          },
+          "columns": {
+            "mappingMode": "autoMapInputData",
+            "value": {},
+            "matchingColumns": []
+          },
+          "options": {
+            "typecast": true
+          }
+        }
+      },
+      {
+        "id": "n5",
+        "name": "Look up what this source costs",
+        "type": "n8n-nodes-base.airtable",
+        "typeVersion": 2.1,
+        "position": [
+          440,
+          0
+        ],
+        "alwaysOutputData": true,
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "kfUPkHmUFozrqUdz",
+            "name": "Airtable — Pipeline House"
+          }
+        },
+        "parameters": {
+          "resource": "record",
+          "operation": "search",
+          "base": {
+            "__rl": true,
+            "value": "appXXXXXXXXXXXXXX",
+            "mode": "id"
+          },
+          "table": {
+            "__rl": true,
+            "value": "tblLEADSXXXXXXXXX",
+            "mode": "id"
+          },
+          "filterByFormula": "={{ \"{Source} = '\" + $json.Source + \"'\" }}",
+          "limit": 1,
+          "options": {}
+        }
+      },
+      {
+        "id": "n6",
+        "name": "Attach the cost",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          0
+        ],
+        "parameters": {
+          "jsCode": "\n// The lookup replaced our lead with the Sources row, so pull the lead back\n// and copy the rate across. Missing rate is fine — the field stays empty and\n// the summary will report how many leads it could not price.\n\nconst lead = { ...$('Work out the source').first().json };\nconst rate = $json['Cost per lead'] ?? $json.fields?.['Cost per lead'];\n\nif (rate !== undefined && rate !== null && rate !== '') {\n  lead['Lead cost'] = Number(rate);\n}\n\nreturn [{ json: lead }];\n"
+        }
+      },
+      {
+        "id": "a9",
+        "name": "Record the reply",
+        "type": "n8n-nodes-base.airtable",
+        "typeVersion": 2.1,
+        "position": [
+          1780,
+          0
+        ],
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "kfUPkHmUFozrqUdz",
+            "name": "Airtable — Pipeline House"
+          }
+        },
+        "parameters": {
+          "resource": "record",
+          "operation": "update",
+          "base": {
+            "__rl": true,
+            "value": "appXXXXXXXXXXXXXX",
+            "mode": "id"
+          },
+          "table": {
+            "__rl": true,
+            "value": "tblSOURCESXXXXXXX",
+            "mode": "id"
+          },
+          "columns": {
+            "mappingMode": "autoMapInputData",
+            "value": {},
+            "matchingColumns": [
+              "id"
+            ],
+            "schema": []
+          },
+          "options": {
+            "typecast": true
+          }
+        }
+      },
+      {
+        "id": "n4",
+        "name": "Reply to the form",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2000,
+          0
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ ok: true, id: $('Save to Airtable').first().json.id, source: $('Attach the cost').first().json.Source, replied: $('Tidy up').first().json['Reply channel'] }) }}"
+        }
+      },
+      {
+        "id": "d1",
+        "name": "Look for recent duplicates",
+        "type": "n8n-nodes-base.airtable",
+        "typeVersion": 2.1,
+        "position": [
+          1120,
+          0
+        ],
+        "executeOnce": true,
+        "alwaysOutputData": true,
+        "credentials": {
+          "airtableTokenApi": {
+            "id": "kfUPkHmUFozrqUdz",
+            "name": "Airtable — Pipeline House"
+          }
+        },
+        "parameters": {
+          "resource": "record",
+          "operation": "search",
+          "base": {
+            "__rl": true,
+            "value": "appXXXXXXXXXXXXXX",
+            "mode": "id"
+          },
+          "table": {
+            "__rl": true,
+            "value": "tblSOURCESXXXXXXX",
+            "mode": "id"
+          },
+          "filterByFormula": "={{ (() => { const l = $('Attach the cost').first().json; const esc = s => String(s||'').replace(/'/g, ''); const e = esc(l.Email), p = esc(l.Phone); const parts = []; if (e) parts.push(\"{Email}='\" + e + \"'\"); if (p) parts.push(\"{Phone}='\" + p + \"'\"); return parts.length ? 'OR(' + parts.join(',') + ')' : 'FALSE()'; })() }}",
+          "limit": 5,
+          "options": {}
+        }
+      },
+      {
+        "id": "k1",
+        "name": "Check the lead is real",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1340,
+          0
+        ],
+        "parameters": {
+          "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
+        }
+      },
+      {
+        "id": "i1",
+        "name": "Worth messaging?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1500,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "c1",
+                "leftValue": "={{ $json._send }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "s1",
+        "name": "Send the email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1640,
+          -110
+        ],
+        "onError": "continueRegularOutput",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "m5ocseN4SbJulI0T",
+            "name": "Resend — Pipeline House"
+          }
+        },
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <onboarding@resend.dev>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "z1",
+        "name": "Tidy up",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1640,
+          110
+        ],
+        "parameters": {
+          "jsCode": "\n// Keys beginning with _ are working values, not Airtable columns. Auto-mapping\n// would try to write them as fields and the update would fail, so they are\n// stripped here rather than scattered through the flow.\n\nconst row = { ...$('Check the lead is real').first().json };\n\nlet emailed = false;\ntry { emailed = !!$('Send the email').first().json?.id; } catch (e) { emailed = false; }\nif (row._send && !emailed) row['Reply channel'] = 'Not sent — send failed';\n\nconsole.log(`replied in ${row._seconds}s` + (row._blocked ? ` | blocked: ${row._blocked}` : ''));\n\nfor (const k of Object.keys(row)) if (k.startsWith('_')) delete row[k];\nreturn [{ json: row }];\n"
+        }
+      }
+    ],
+    "connections": {
+      "Lead arrives": {
+        "main": [
+          [
+            {
+              "node": "Work out the source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Work out the source": {
+        "main": [
+          [
+            {
+              "node": "Look up what this source costs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Look up what this source costs": {
+        "main": [
+          [
+            {
+              "node": "Attach the cost",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Attach the cost": {
+        "main": [
+          [
+            {
+              "node": "Save to Airtable",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save to Airtable": {
+        "main": [
+          [
+            {
+              "node": "Look for recent duplicates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Look for recent duplicates": {
+        "main": [
+          [
+            {
+              "node": "Check the lead is real",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check the lead is real": {
+        "main": [
+          [
+            {
+              "node": "Worth messaging?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Worth messaging?": {
+        "main": [
+          [
+            {
+              "node": "Send the email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Tidy up",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send the email": {
+        "main": [
+          [
+            {
+              "node": "Tidy up",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tidy up": {
+        "main": [
+          [
+            {
+              "node": "Record the reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record the reply": {
+        "main": [
+          [
+            {
+              "node": "Reply to the form",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Rey Francis Talandrata",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "createdAt": "2026-08-31T01:10:25.125Z",
+    "updatedAt": "2026-08-31T01:10:25.125Z",
+    "workflowPublishHistory": [
+      {
+        "id": 20,
+        "workflowId": "4pRHSWrUhS5IEjhG",
+        "versionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
+        "event": "activated",
+        "userId": "589f193b-66fd-4c50-8c9c-1aa2e002b73f",
+        "createdAt": "2026-08-31T01:10:25.731Z"
+      }
+    ]
+  }
+}
