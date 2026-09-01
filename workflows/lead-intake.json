@@ -1,13 +1,10 @@
 {
   "name": "Lead intake and first reply",
   "description": null,
-  "activeVersionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
-  "createdAt": "2026-08-29T15:20:43.337Z",
-  "updatedAt": "2026-08-31T01:10:25.122Z",
+  "activeVersionId": "e2164c35-f398-4153-b631-72cb9e41161c",
   "isArchived": false,
-  "versionCounter": 8,
+  "versionCounter": 10,
   "sourceWorkflowId": null,
-  "triggerCount": 1,
   "nodes": [
     {
       "id": "n1",
@@ -67,7 +64,7 @@
         },
         "table": {
           "__rl": true,
-          "value": "tblSOURCESXXXXXXX",
+          "value": "tblLEADSXXXXXXXXX",
           "mode": "id"
         },
         "columns": {
@@ -106,7 +103,7 @@
         },
         "table": {
           "__rl": true,
-          "value": "tblLEADSXXXXXXXXX",
+          "value": "tblSOURCESXXXXXXX",
           "mode": "id"
         },
         "filterByFormula": "={{ \"{Source} = '\" + $json.Source + \"'\" }}",
@@ -152,7 +149,7 @@
         },
         "table": {
           "__rl": true,
-          "value": "tblSOURCESXXXXXXX",
+          "value": "tblLEADSXXXXXXXXX",
           "mode": "id"
         },
         "columns": {
@@ -209,7 +206,7 @@
         },
         "table": {
           "__rl": true,
-          "value": "tblSOURCESXXXXXXX",
+          "value": "tblLEADSXXXXXXXXX",
           "mode": "id"
         },
         "filterByFormula": "={{ (() => { const l = $('Attach the cost').first().json; const esc = s => String(s||'').replace(/'/g, ''); const e = esc(l.Email), p = esc(l.Phone); const parts = []; if (e) parts.push(\"{Email}='\" + e + \"'\"); if (p) parts.push(\"{Phone}='\" + p + \"'\"); return parts.length ? 'OR(' + parts.join(',') + ')' : 'FALSE()'; })() }}",
@@ -227,7 +224,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
+        "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    // Seconds is the real figure. Minutes is kept for continuity, but a\n    // sub-minute reply rounds to 0 there — never show it on its own.\n    'Response seconds': seconds,\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
       }
     },
     {
@@ -287,7 +284,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <onboarding@resend.dev>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
+        "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <hello@yourdomain.com>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
         "options": {}
       }
     },
@@ -440,7 +437,7 @@
     "executionOrder": "v1"
   },
   "activeVersion": {
-    "versionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
+    "versionId": "e2164c35-f398-4153-b631-72cb9e41161c",
     "workflowId": "4pRHSWrUhS5IEjhG",
     "nodes": [
       {
@@ -501,7 +498,7 @@
           },
           "table": {
             "__rl": true,
-            "value": "tblSOURCESXXXXXXX",
+            "value": "tblLEADSXXXXXXXXX",
             "mode": "id"
           },
           "columns": {
@@ -540,7 +537,7 @@
           },
           "table": {
             "__rl": true,
-            "value": "tblLEADSXXXXXXXXX",
+            "value": "tblSOURCESXXXXXXX",
             "mode": "id"
           },
           "filterByFormula": "={{ \"{Source} = '\" + $json.Source + \"'\" }}",
@@ -586,7 +583,7 @@
           },
           "table": {
             "__rl": true,
-            "value": "tblSOURCESXXXXXXX",
+            "value": "tblLEADSXXXXXXXXX",
             "mode": "id"
           },
           "columns": {
@@ -643,7 +640,7 @@
           },
           "table": {
             "__rl": true,
-            "value": "tblSOURCESXXXXXXX",
+            "value": "tblLEADSXXXXXXXXX",
             "mode": "id"
           },
           "filterByFormula": "={{ (() => { const l = $('Attach the cost').first().json; const esc = s => String(s||'').replace(/'/g, ''); const e = esc(l.Email), p = esc(l.Phone); const parts = []; if (e) parts.push(\"{Email}='\" + e + \"'\"); if (p) parts.push(\"{Phone}='\" + p + \"'\"); return parts.length ? 'OR(' + parts.join(',') + ')' : 'FALSE()'; })() }}",
@@ -661,7 +658,7 @@
           0
         ],
         "parameters": {
-          "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
+          "jsCode": "\n// Decide whether this lead is worth messaging, then write the reply.\n//\n// Validation, not verification. We check the data ourselves in milliseconds\n// rather than asking the person to prove anything — making them confirm an\n// email before we reply would destroy the sub-minute response we are selling.\n\nconst raw   = $('Lead arrives').first().json.body ?? $('Lead arrives').first().json;\nconst lead  = $('Attach the cost').first().json;\nconst saved = $('Save to Airtable').first().json;\nconst dupes = $('Look for recent duplicates').all().map(i => i.json);\n\nconst now = new Date();\nconst received = new Date(lead['Received']);\nconst seconds = Math.max(1, Math.round((now - received) / 1000));\n\nconst email = String(lead['Email'] || '').trim();\nconst phone = String(lead['Phone'] || '').replace(/[^\\d]/g, '');\n\nconst reasons = [];\n\n// 1. Honeypot — a field hidden from people, visible to bots. Anything in it is automated.\nif (String(raw.website || raw.company_url || raw._hp || '').trim()) reasons.push('honeypot filled');\n\n// 2. Filled in too fast to have been typed.\n// Measure against when the lead ARRIVED, not now — by the time this runs we\n// have already spent a few seconds saving and checking for duplicates, which\n// would make every submission look slow.\nconst loadedAt = Number(raw.form_loaded_at || 0);\nif (loadedAt > 0) {\n  const took = (received.getTime() - loadedAt) / 1000;\n  if (took < 2) reasons.push(`submitted in ${took.toFixed(1)}s`);\n}\n\n// 3. Do we have any way to reach them at all.\nconst emailOk = /^[^@\\s]+@[^@\\s.]+\\.[^@\\s]{2,}$/.test(email);\nif (!emailOk && !phone) reasons.push('no usable contact details');\n\n// 4. Throwaway inboxes.\nconst throwaway = ['mailinator.com','guerrillamail.com','10minutemail.com','tempmail.com',\n                   'yopmail.com','trashmail.com','sharklasers.com','getnada.com'];\nconst domain = email.split('@')[1]?.toLowerCase() || '';\nif (domain && throwaway.includes(domain)) reasons.push('disposable email');\n\n// 5. Already contacted this person in the last half hour — do not message twice.\nconst recentDupe = dupes.some(d => {\n  if (!d.id || d.id === saved.id) return false;\n  const t = new Date(d['Received'] || 0);\n  return (now - t) < 30 * 60 * 1000;\n});\nif (recentDupe) reasons.push('duplicate within 30 minutes');\n\n// --- compose the reply ---\nconst rawName = String(lead['Name'] || '').trim();\nconst usable = rawName && !/^unnamed/i.test(rawName);\nconst firstName = usable ? rawName.split(/\\s+/)[0] : 'there';\nconst service = String(lead['Service'] || '').toLowerCase();\nconst job = service && service !== 'other' ? `your ${service} job` : 'your job';\n\nconst text =\n  `Hi ${firstName} — thanks for getting in touch about ${job}. ` +\n  `I've got your details and someone will call you shortly. ` +\n  `What's the best time to reach you today?`;\n\nconst send = reasons.length === 0 && emailOk;\n\nreturn [{\n  json: {\n    id: saved.id,\n    'First contact': now.toISOString(),\n    // Seconds is the real figure. Minutes is kept for continuity, but a\n    // sub-minute reply rounds to 0 there — never show it on its own.\n    'Response seconds': seconds,\n    'Response minutes': Math.round(seconds / 60),\n    'First reply text': text,\n    'Reply channel': send ? 'Email'\n      : (reasons.length ? `Not sent — ${reasons[0]}` : 'Not sent — no contact details'),\n    'Stage': 'Contacted',\n    _send: send,\n    _to: email,\n    _subject: `Thanks for your enquiry${usable ? ', ' + firstName : ''}`,\n    _text: text,\n    _seconds: seconds,\n    _blocked: reasons.join('; '),\n  },\n}];\n"
         }
       },
       {
@@ -721,7 +718,7 @@
           "genericAuthType": "httpHeaderAuth",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <onboarding@resend.dev>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
+          "jsonBody": "={{ JSON.stringify({ from: 'The Pipeline House <hello@yourdomain.com>', to: [$json._to], subject: $json._subject, text: $json._text }) }}",
           "options": {}
         }
       },
@@ -874,16 +871,16 @@
     "name": null,
     "description": null,
     "autosaved": false,
-    "createdAt": "2026-08-31T01:10:25.125Z",
-    "updatedAt": "2026-08-31T01:10:25.125Z",
+    "createdAt": "2026-09-01T08:16:24.845Z",
+    "updatedAt": "2026-09-01T08:16:24.845Z",
     "workflowPublishHistory": [
       {
-        "id": 20,
+        "id": 24,
         "workflowId": "4pRHSWrUhS5IEjhG",
-        "versionId": "c9f66216-9276-43c3-8ba0-d10788cc2c7b",
+        "versionId": "e2164c35-f398-4153-b631-72cb9e41161c",
         "event": "activated",
         "userId": "589f193b-66fd-4c50-8c9c-1aa2e002b73f",
-        "createdAt": "2026-08-31T01:10:25.731Z"
+        "createdAt": "2026-09-01T08:16:25.199Z"
       }
     ]
   }

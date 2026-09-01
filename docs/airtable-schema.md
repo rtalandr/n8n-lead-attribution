@@ -22,7 +22,8 @@ One row per lead. Written on arrival, updated after the reply attempt.
 | Stage | Single select | New, Contacted, Quoted, Negotiating, Won, Lost |
 | Job value | Currency | Filled when won |
 | First contact | Date (with time) | When the auto-reply went out |
-| Response minutes | Number | Rounds down — see README limitations |
+| Response seconds | Number | The real figure. Source of truth |
+| Response minutes | Number | Derived. A sub-minute reply is `0` here — never show it alone |
 | Reply channel | Single line | Email, or why nothing was sent |
 
 **Empty `Lead cost` is not zero.** It means nobody has said what this source costs, and the
@@ -58,7 +59,8 @@ Written by the monthly flow. Never edited by hand.
 | Spend | Currency |
 | Revenue | Currency |
 | Cost per booked job | Currency — empty unless spend is known |
-| Median response minutes | Number |
+| Median response secs | Number |
+| Median response mins | Number — one decimal, derived from seconds |
 | Data quality | Single select |
 | Note | Long text |
 | Generated | Date (with time) |

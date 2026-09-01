@@ -140,9 +140,6 @@ Sending uses Resend over plain HTTP, so any provider with a REST API drops in.
 
 Stated rather than hidden, because a repo that claims to be about honest reporting should be.
 
-- **`Response minutes` rounds down.** A 41-second reply is stored as `0`. The value is
-  correct, the unit is wrong. Fine for reporting, misleading if you are selling sub-minute
-  response.
 - **Last-click only.** The source that produced the form fill gets the credit. No multi-touch
   modelling — deliberately, because it needs traffic volume most small businesses don't have.
 - **Offline conversion import is not wired up.** The click IDs are captured, which is the part
